@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Collaborative Docs - Vue + JWT</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+</head>
+<body>
+<div id="app">
+    <header>
+        <h1>Collaborative Docs</h1>
+        <div v-if="token">
+            <span>Autentificat ca {{ username }}</span>
+            <button @click="logout">Logout</button>
+        </div>
+    </header>
+
+    <section v-if="!token">
+        <h2>Login</h2>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+            <input v-model="loginForm.username" placeholder="user" />
+            <input v-model="loginForm.password" type="password" placeholder="password" />
+            <button @click="login">Login</button>
+        </div>
+        <p v-if="error" style="color:red">{{ error }}</p>
+        <p>Utilizatori demo: <code>user/password</code>, <code>editor/password</code></p>
+    </section>
+
+    <section v-else>
+        <h2>Documente</h2>
+        <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.5rem;">
+            <input v-model="newTitle" placeholder="Titlu nou" />
+            <button @click="createDoc">Creeaza</button>
+        </div>
+        <ul>
+            <li v-for="doc in documents" :key="doc.id">
+                <a href="#" @click.prevent="selectDoc(doc)">{{ doc.title }}</a>
+                <small>v{{ doc.version ?? 0 }}</small>
+            </li>
+        </ul>
+        <hr />
+        <div v-if="currentDoc">
+            <h3>Editare: {{ currentDoc.title }}</h3>
+            <div id="status">{{ status }}</div>
+            <textarea v-model="currentContent" @input="debouncedSend"></textarea>
+        </div>
+        <p v-else>Alege un document pentru editare.</p>
+    </section>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+createApp({
+    data() {
+        return {
+            token: localStorage.getItem('token') || '',
+            username: localStorage.getItem('username') || '',
+            loginForm: { username: '', password: '' },
+            error: '',
+            documents: [],
+            newTitle: '',
+            currentDoc: null,
+            currentContent: '',
+            currentVersion: 0,
+            stompClient: null,
+            pendingTimer: null,
+            status: 'Neconectat'
+        };
+    },
+    mounted() {
+        if (this.token) {
+            this.fetchDocs();
+        }
+    },
+    methods: {
+        headers() {
+            return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this.token };
+        },
+        async login() {
+            this.error = '';
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.loginForm)
+                });
+                if (!res.ok) throw new Error('Login esuat');
+                const data = await res.json();
+                this.token = data.token;
+                this.username = data.username;
+                localStorage.setItem('token', this.token);
+                localStorage.setItem('username', this.username);
+                this.fetchDocs();
+            } catch (e) {
+                this.error = e.message;
+            }
+        },
+        logout() {
+            this.token = '';
+            this.username = '';
+            this.documents = [];
+            this.currentDoc = null;
+            this.currentContent = '';
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            this.disconnectWs();
+        },
+        async fetchDocs() {
+            const res = await fetch('/api/documents', { headers: this.headers() });
+            if (res.ok) {
+                this.documents = await res.json();
+            } else if (res.status === 401) {
+                this.logout();
+            }
+        },
+        async createDoc() {
+            if (!this.newTitle) return;
+            const res = await fetch('/api/documents', {
+                method: 'POST',
+                headers: this.headers(),
+                body: JSON.stringify({ title: this.newTitle })
+            });
+            if (res.ok) {
+                const doc = await res.json();
+                this.documents.push(doc);
+                this.newTitle = '';
+            }
+        },
+        async selectDoc(doc) {
+            const res = await fetch(`/api/documents/${doc.id}`, { headers: this.headers() });
+            if (!res.ok) return;
+            this.currentDoc = await res.json();
+            this.currentContent = this.currentDoc.content;
+            this.currentVersion = this.currentDoc.version ?? 0;
+            this.connectWs();
+        },
+        connectWs() {
+            this.disconnectWs();
+            const socket = new SockJS('/ws');
+            this.stompClient = Stomp.over(socket);
+            this.stompClient.connect({ Authorization: 'Bearer ' + this.token }, () => {
+                this.status = 'Conectat';
+                this.stompClient.subscribe(`/topic/documents/${this.currentDoc.id}`, (frame) => {
+                    const snapshot = JSON.parse(frame.body);
+                    this.currentVersion = snapshot.version ?? this.currentVersion + 1;
+                    if (document.activeElement !== document.querySelector('textarea')) {
+                        this.currentContent = snapshot.content;
+                    }
+                    this.status = 'Ultima actualizare: ' + new Date(snapshot.updatedAt).toLocaleTimeString();
+                });
+            }, () => {
+                this.status = 'Conexiune pierduta. Reincearca...';
+            });
+        },
+        disconnectWs() {
+            if (this.stompClient && this.stompClient.connected) {
+                this.stompClient.disconnect(() => {});
+            }
+        },
+        debouncedSend() {
+            if (!this.stompClient || !this.stompClient.connected) {
+                this.status = 'WebSocket deconectat';
+                return;
+            }
+            clearTimeout(this.pendingTimer);
+            this.pendingTimer = setTimeout(() => {
+                const payload = {
+                    documentId: this.currentDoc.id,
+                    content: this.currentContent,
+                    version: this.currentVersion
+                };
+                this.stompClient.send('/app/documents.update', {}, JSON.stringify(payload));
+                this.status = 'Actualizare trimisa...';
+            }, 300);
+        }
+    }
+}).mount('#app');
+</script>
+</body>
+</html>

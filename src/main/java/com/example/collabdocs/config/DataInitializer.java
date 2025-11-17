@@ -12,7 +12,7 @@ public class DataInitializer {
     CommandLineRunner seedDocuments(DocumentService service) {
         return args -> {
             if (service.findAll().isEmpty()) {
-                service.create("Document de exemplu", "Începe să editezi și vezi actualizările în timp real.");
+                service.create("Document de exemplu", "Incepe sa editezi si vezi actualizarile in timp real.");
             }
         };
     }

@@ -9,6 +9,7 @@ import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 @Controller
 public class DocumentWebSocketController {
@@ -21,6 +22,7 @@ public class DocumentWebSocketController {
         this.messagingTemplate = messagingTemplate;
     }
 
+    @PreAuthorize("isAuthenticated()")
     @MessageMapping("/documents.update")
     public void handleUpdate(@Valid @Payload DocumentUpdateMessage message) {
         Document updated = service.updateContent(message.getDocumentId(), message.getContent(), message.getVersion());
