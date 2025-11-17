@@ -1,0 +1,11 @@
+com\example\collabdocs\config\SecurityConfig.class
+com\example\collabdocs\config\WebSocketConfig.class
+com\example\collabdocs\dto\DocumentUpdateMessage.class
+com\example\collabdocs\controller\DocumentController.class
+com\example\collabdocs\CollabDocsApplication.class
+com\example\collabdocs\repository\DocumentRepository.class
+com\example\collabdocs\config\DataInitializer.class
+com\example\collabdocs\service\DocumentService.class
+com\example\collabdocs\model\Document.class
+com\example\collabdocs\controller\DocumentWebSocketController.class
+com\example\collabdocs\dto\DocumentSnapshot.class

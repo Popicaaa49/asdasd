@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title th:text="${doc.title}">Editor</title>
+    <link rel="stylesheet" th:href="@{/css/main.css}">
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+</head>
+<body>
+<header>
+    <div>
+        <a href="/">&#8592; Înapoi</a>
+        <h2 th:text="${doc.title}"></h2>
+        <div>Utilizator: <span th:text="${username}"></span></div>
+    </div>
+    <a href="/logout">Logout</a>
+</header>
+
+<section>
+    <div id="status">Se conectează...</div>
+    <textarea id="content" th:text="${doc.content}"></textarea>
+</section>
+
+<script th:inline="javascript">
+    const docId = [[${doc.id}]];
+    let currentVersion = [[${doc.version} == null ? 0 : ${doc.version}]];
+    let stompClient = null;
+    let pendingTimer = null;
+    const statusEl = document.getElementById('status');
+    const contentEl = document.getElementById('content');
+
+    function connect() {
+        const socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({}, () => {
+            statusEl.textContent = 'Conectat - sincronizare în timp real activă';
+            stompClient.subscribe(`/topic/documents/${docId}`, (frame) => {
+                const snapshot = JSON.parse(frame.body);
+                currentVersion = snapshot.version ?? currentVersion + 1;
+                if (document.activeElement !== contentEl) {
+                    contentEl.value = snapshot.content;
+                }
+                statusEl.textContent = `Ultima actualizare: ${new Date(snapshot.updatedAt).toLocaleTimeString()}`;
+            });
+        }, (err) => {
+            statusEl.textContent = 'Conexiune pierdută. Reîncercare...';
+            setTimeout(connect, 2000);
+        });
+    }
+
+    function scheduleSend() {
+        if (!stompClient || !stompClient.connected) {
+            statusEl.textContent = 'Nu există conexiune WebSocket';
+            return;
+        }
+        clearTimeout(pendingTimer);
+        pendingTimer = setTimeout(() => {
+            const payload = {
+                documentId: docId,
+                content: contentEl.value,
+                version: currentVersion
+            };
+            stompClient.send('/app/documents.update', {}, JSON.stringify(payload));
+            statusEl.textContent = 'Actualizare trimisă...';
+        }, 300);
+    }
+
+    contentEl.addEventListener('input', scheduleSend);
+    connect();
+</script>
+</body>
+</html>
